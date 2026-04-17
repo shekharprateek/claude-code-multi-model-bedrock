@@ -1,0 +1,5 @@
+.litellm.pid
+.litellm.log
+__pycache__/
+*.pyc
+.env
