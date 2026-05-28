@@ -1,8 +1,8 @@
-# Claude Code Multi-Model on Amazon Bedrock
+# Claude Code Multi-Model
 
 [![License: MIT-0](https://img.shields.io/badge/License-MIT--0-yellow.svg)](LICENSE)
 [![Bedrock](https://img.shields.io/badge/Amazon%20Bedrock-Mantle-blue)](https://docs.aws.amazon.com/bedrock/latest/userguide/models-endpoint-availability.html)
-[![Models: 43](https://img.shields.io/badge/Models-43%20from%2012%20providers-orange)](./)
+[![Models: 43+](https://img.shields.io/badge/Models-43%2B%20from%2012%20providers-orange)](./)
 
 > **This is sample code intended for demonstration and learning purposes only.**
 > It is not meant for production use. Review and harden all scripts, configurations,
@@ -25,11 +25,14 @@ Research confirms that intelligent model routing dramatically reduces costs with
 - [RouteLLM](https://arxiv.org/abs/2406.18665) (UC Berkeley) — reduces costs by **over 2x** without compromising response quality
 - [Hybrid LLM](https://arxiv.org/abs/2404.14618) (ICLR 2024) — **40% fewer calls** to the expensive model with no quality drop
 
-## This Solution: Multi-Model Claude Code
+## This Solution: Claude Code with Any Model
 
-Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with **any of 43 foundation models on Amazon Bedrock** — not just Anthropic models. Route routine tasks to models that cost 5-20x less, reserve frontier models for complex reasoning.
+Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with **any foundation model** — not just Anthropic models. Route routine tasks to models that cost 5-20x less, reserve frontier models for complex reasoning. Choose your deployment path:
 
-Our benchmark shows **Qwen Coder 30B delivers 93% of Claude Sonnet's quality at 1/20th the cost**, and **Kimi K2.5 matches Sonnet's pass rate at 1/5th the cost** (see [Benchmark Results](#benchmark-results) below).
+| Path | Models | Cost Model | Best For |
+|------|--------|------------|----------|
+| [**Bedrock (Mantle)**](bedrock/) | 43 models from 12 providers | Pay-per-token | Teams wanting model variety + zero infrastructure |
+| [**Self-Hosted (EC2)**](self-hosted/) | Any Ollama/vLLM model | Fixed hourly GPU cost | Data sovereignty, air-gapped environments, unlimited tokens |
 
 ```
 Task Complexity        Recommended Model         Cost vs Sonnet
@@ -41,325 +44,120 @@ Complex refactoring    Claude Sonnet             baseline
 Architecture decisions Claude Opus               frontier
 ```
 
+## Benchmark Results
+
+We evaluated 5 models across 5 real-world coding tasks (bug fix, test writing, feature addition, refactoring, circular import resolution). Each model runs Claude Code with full tool access and is scored by both deterministic verifiers (pytest) and an LLM-as-judge (Claude Opus evaluating the actual generated code).
+
+| Model | Input $/M | Output $/M | Pass Rate | Quality (1-5) | Avg Latency | Cost Efficiency |
+|-------|-----------|------------|-----------|---------------|-------------|-----------------|
+| **claude-sonnet** | $3.00 | $15.00 | **100%** | **4.5** | 35s | baseline |
+| **qwen-coder-30b** | $0.15 | $0.62 | 80% | **4.2** | 129s | 20x cheaper, 93% quality |
+| **kimi-k2.5** | $0.60 | $2.50 | 80% | **4.1** | 94s | 5x cheaper, 91% quality |
+| **qwen-coder-next** | $0.30 | $1.20 | 80% | **4.0** | 140s | 10x cheaper, 89% quality |
+| **deepseek-v3** | $0.50 | $2.00 | 60% | **3.2** | 155s | 6x cheaper, 71% quality |
+
+> Full methodology, per-task breakdown, and how to run the benchmark yourself: [bedrock/README.md](bedrock/README.md#benchmark-results)
+
 ## Architecture
 
 ```text
-┌─────────────────────────────────────────────────────────────────┐
-│                        Claude Code CLI                          │
-│                  (speaks Anthropic Messages API)                │
-└──────────┬──────────────────────────────────────────┬───────────┘
-           │                                          │
-   ┌───────▼────────┐                       ┌────────▼──────────┐
-   │  Native Path   │                       │  LiteLLM Proxy    │
-   │  (no proxy)    │                       │  (localhost:4000)  │
-   │                │                       │                   │
-   │  Claude Opus   │                       │  Anthropic →      │
-   │  Claude Sonnet │                       │  OpenAI format    │
-   │  Claude Haiku  │                       │  translation      │
-   └───────┬────────┘                       └────────┬──────────┘
-           │                                          │
-   ┌───────▼────────┐                       ┌────────▼──────────┐
-   │  Amazon        │                       │  Bedrock Mantle   │
-   │  Bedrock       │                       │  (Chat Completions│
-   │  (Anthropic)   │                       │   API, us-east-1) │
-   │                │                       │                   │
-   │                │                       │  38 models from   │
-   │                │                       │  12 providers     │
-   └────────────────┘                       └───────────────────┘
+                         ┌─────────────────────────────┐
+                         │      Claude Code CLI        │
+                         │  (Anthropic Messages API)   │
+                         └──────────┬──────────────────┘
+                                    │
+                 ┌──────────────────┼──────────────────┐
+                 │                  │                   │
+         ┌───────▼──────┐  ┌───────▼──────┐  ┌────────▼─────────┐
+         │ Native Path  │  │ LiteLLM      │  │ LiteLLM          │
+         │ (no proxy)   │  │ Proxy        │  │ Proxy            │
+         │              │  │ → Bedrock    │  │ → Self-Hosted    │
+         │ Claude Opus  │  │   Mantle     │  │   (Ollama/vLLM)  │
+         │ Claude Sonnet│  │              │  │                  │
+         │ Claude Haiku │  │ 38 models    │  │ Any GGUF/HF      │
+         └──────┬───────┘  │ 12 providers │  │ model on GPU     │
+                │          └──────┬───────┘  └────────┬─────────┘
+                │                 │                    │
+         ┌──────▼───────┐  ┌─────▼────────┐  ┌───────▼─────────┐
+         │ Amazon       │  │ Bedrock      │  │ EC2 GPU         │
+         │ Bedrock      │  │ Mantle       │  │ Instance        │
+         │ (Anthropic)  │  │ (us-east-1)  │  │ (your VPC)      │
+         └──────────────┘  └──────────────┘  └─────────────────┘
 ```
-
-**Why a proxy?** Claude Code speaks the Anthropic Messages API (`/v1/messages`). Bedrock Mantle's third-party models speak the OpenAI Chat Completions API (`/v1/chat/completions`). [LiteLLM](https://github.com/BerriAI/litellm) translates between these formats.
-
-**Why Mantle?** Bedrock Mantle is a unified OpenAI-compatible endpoint for non-Anthropic models on Bedrock. All 38 models support tool calling and streaming natively — no per-model configuration needed.
-
-## Supported Models (43 total)
-
-### Anthropic (5 — native Bedrock, no proxy)
-
-| Alias | Model | Best For |
-|-------|-------|----------|
-| `claude-opus` | Claude Opus 4.6 | Flagship reasoning, complex tasks |
-| `claude-sonnet` | Claude Sonnet 4.6 | Balanced speed/quality |
-| `claude-haiku` | Claude Haiku 4.5 | Fast, lightweight tasks |
-| `claude-opus-4.5` | Claude Opus 4.5 | Previous gen flagship |
-| `claude-sonnet-4.5` | Claude Sonnet 4.5 | Previous gen balanced |
-
-### Third-Party (38 — via LiteLLM proxy → Bedrock Mantle)
-
-| Provider | Models | Aliases |
-|----------|--------|---------|
-| **Qwen** (7) | Coder Next, Coder 480B, Coder 30B, 235B, 32B, VL 235B, Next 80B | `qwen-coder-next`, `qwen-coder-480b`, `qwen-coder-30b`, `qwen-235b`, `qwen-32b`, `qwen-vl-235b`, `qwen-next-80b` |
-| **DeepSeek** (2) | V3.2, V3.1 | `deepseek-v3`, `deepseek-v3.1` |
-| **Mistral** (8) | Devstral 123B, Large 3 675B, Magistral Small, Ministral 14B/8B/3B, Voxtral Small/Mini | `devstral-123b`, `mistral-large-3`, `magistral-small`, `ministral-14b`, `ministral-8b`, `ministral-3b`, `voxtral-small-24b`, `voxtral-mini-3b` |
-| **Moonshot AI** (2) | Kimi K2.5, K2 Thinking | `kimi-k2.5`, `kimi-k2-thinking` |
-| **MiniMax** (3) | M2, M2.1, M2.5 | `minimax-m2`, `minimax-m2.1`, `minimax-m2.5` |
-| **NVIDIA** (4) | Nemotron Super 120B, Nano 30B/12B/9B | `nemotron-super-120b`, `nemotron-nano-30b`, `nemotron-nano-12b`, `nemotron-nano-9b` |
-| **OpenAI** (4) | GPT OSS 120B/20B, Safeguard 120B/20B | `gpt-oss-120b`, `gpt-oss-20b`, `gpt-oss-safeguard-120b`, `gpt-oss-safeguard-20b` |
-| **Z.AI** (4) | GLM 5, 4.7, 4.7 Flash, 4.6 | `glm-5`, `glm-4.7`, `glm-4.7-flash`, `glm-4.6` |
-| **Google** (3) | Gemma 3 27B/12B/4B | `gemma-3-27b`, `gemma-3-12b`, `gemma-3-4b` |
-| **Writer** (1) | Palmyra Vision 7B | `palmyra-vision-7b` |
-
-> **Note:** Meta Llama, Amazon Nova, and DeepSeek R1 are available on Bedrock but are **not** on Mantle — they lack tool calling support required by Claude Code.
-
-## Prerequisites
-
-- **AWS Account** with Bedrock model access enabled
-- **AWS CLI** configured (`aws configure` or IAM role/SSO)
-- **Python 3.9+** (for LiteLLM proxy and token generation)
-- **Claude Code CLI** installed ([docs](https://docs.anthropic.com/en/docs/claude-code))
 
 ## Quick Start
 
-### 1. Clone and setup
+### Option A: Bedrock (43 models, pay-per-token)
 
 ```bash
-git clone https://github.com/shekharprateek/claude-code-multi-model-bedrock.git
-cd claude-code-multi-model-bedrock
-chmod +x scripts/*.sh
-```
+cd bedrock
 
-### 2. Use Anthropic models (no proxy needed)
-
-```bash
-./scripts/claude-model.sh --model claude-opus
+# Anthropic models — no proxy needed
 ./scripts/claude-model.sh --model claude-sonnet
-./scripts/claude-model.sh --model claude-haiku
-```
 
-### 3. Use third-party models (proxy required)
-
-```bash
-# Step 1: Start the LiteLLM proxy (generates Mantle token, installs deps)
+# Third-party models — start proxy first
 ./scripts/setup-proxy.sh
-
-# Step 2: Run Claude Code with any model
 ./scripts/claude-model.sh --model qwen-coder-next
-./scripts/claude-model.sh --model deepseek-v3
 ./scripts/claude-model.sh --model kimi-k2.5
-./scripts/claude-model.sh --model devstral-123b
-
-# With a prompt
-./scripts/claude-model.sh --model qwen-coder-next -p "write a Python REST API"
+./scripts/claude-model.sh --model deepseek-v3
 ```
 
-### 4. Interactive model picker
+See [bedrock/README.md](bedrock/README.md) for full setup, all 43 models, and proxy management.
+
+### Option B: Self-Hosted on EC2 (fixed cost, data stays in VPC)
 
 ```bash
-./scripts/claude-model.sh
-# Shows numbered list of all 43 models — pick one
+cd self-hosted
+
+# Launch GPU instance + install Ollama + pull model
+./scripts/setup.sh
+
+# Run Claude Code with self-hosted model
+./scripts/run.sh --model qwen3.5:35b
 ```
 
-### 5. List all available models
+See [self-hosted/README.md](self-hosted/README.md) for instance types, GPU selection, and SSH tunnel setup.
 
-```bash
-./scripts/claude-model.sh --list
-```
+## Comparison
 
-## Proxy Management
+| | Bedrock (Mantle) | Self-Hosted (EC2) |
+|---|---|---|
+| **Models** | 43 from 12 providers | Any GGUF/HF model |
+| **Pricing** | Per-token ($0.15-$15/M) | Per-hour ($0.84-$4.60/hr GPU) |
+| **Setup time** | 5 minutes | 15-20 minutes |
+| **Latency** | 16-180s per task | Depends on GPU + model size |
+| **Data location** | AWS Bedrock service | Your VPC, your instance |
+| **Best when** | Variable workload, model variety | Fixed workload, data sovereignty |
+| **Break-even** | < ~2M tokens/hour | > ~2M tokens/hour |
 
-```bash
-# Start proxy (installs litellm + token generator if needed)
-./scripts/setup-proxy.sh
-
-# Custom port
-./scripts/setup-proxy.sh --port 8080
-
-# Check status
-./scripts/setup-proxy.sh --status
-
-# Refresh Mantle bearer token (valid 12h)
-./scripts/setup-proxy.sh --refresh
-
-# Stop proxy
-./scripts/setup-proxy.sh --stop
-
-# View logs
-tail -f .litellm.log
-```
-
-## Manual Configuration (No Scripts)
-
-### Anthropic models (native Bedrock)
-
-```bash
-export CLAUDE_CODE_USE_BEDROCK=1
-export AWS_REGION=us-east-1
-claude
-```
-
-### Third-party models (via proxy)
-
-```bash
-# Terminal 1: Start proxy
-pip install "litellm[proxy]" aws-bedrock-token-generator
-eval $(./scripts/mantle-token.sh)
-LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES=true \
-  litellm --config config/litellm-config.yaml --port 4000
-
-# Terminal 2: Run Claude Code
-ANTHROPIC_BASE_URL=http://localhost:4000 \
-ANTHROPIC_API_KEY=bedrock-proxy \
-claude --settings config/claude-proxy-settings.json \
-       --model qwen-coder-next
-```
-
-> **Important:** The `--settings config/claude-proxy-settings.json` flag disables Bedrock native mode (`CLAUDE_CODE_USE_BEDROCK=0`) so Claude Code routes through the proxy instead. Without it, Claude Code may try to connect directly to Bedrock and fail for non-Anthropic model IDs.
-
-## Shell Aliases (Optional)
-
-Add to `~/.zshrc` or `~/.bashrc`:
-
-```bash
-# Native Bedrock models
-alias cc-opus='CLAUDE_CODE_USE_BEDROCK=1 AWS_REGION=us-east-1 claude'
-alias cc-sonnet='CLAUDE_CODE_USE_BEDROCK=1 AWS_REGION=us-east-1 claude'
-
-# Proxy models (requires LiteLLM running on :4000)
-CC_PROXY="ANTHROPIC_BASE_URL=http://localhost:4000 ANTHROPIC_API_KEY=bedrock-proxy"
-alias cc-qwen="$CC_PROXY claude --settings ~/claude-code-multi-model-bedrock/config/claude-proxy-settings.json --model qwen-coder-next"
-alias cc-deepseek="$CC_PROXY claude --settings ~/claude-code-multi-model-bedrock/config/claude-proxy-settings.json --model deepseek-v3"
-alias cc-devstral="$CC_PROXY claude --settings ~/claude-code-multi-model-bedrock/config/claude-proxy-settings.json --model devstral-123b"
-alias cc-kimi="$CC_PROXY claude --settings ~/claude-code-multi-model-bedrock/config/claude-proxy-settings.json --model kimi-k2.5"
-```
-
-## What's Inside
-
-| File | What it does |
-| --- | --- |
-| [scripts/setup-proxy.sh](scripts/setup-proxy.sh) | One-command proxy setup: generates Mantle token, installs LiteLLM, starts proxy |
-| [scripts/claude-model.sh](scripts/claude-model.sh) | Interactive model picker / launcher for all 43 models |
-| [scripts/mantle-token.sh](scripts/mantle-token.sh) | Standalone Mantle bearer token generator (12h validity) |
-| [config/litellm-config.yaml](config/litellm-config.yaml) | LiteLLM proxy config with all 38 Mantle models |
-| [config/claude-proxy-settings.json](config/claude-proxy-settings.json) | Claude Code settings override (disables native Bedrock mode) |
-
-## How It Works
-
-1. **Token generation**: `setup-proxy.sh` generates a bearer token from your AWS IAM credentials using `aws-bedrock-token-generator`. Tokens are scoped to `us-east-1` and valid for 12 hours.
-
-2. **LiteLLM translation**: The proxy receives Anthropic Messages API requests from Claude Code and translates them to OpenAI Chat Completions format for Bedrock Mantle.
-
-3. **Bedrock Mantle**: AWS's unified endpoint (`bedrock-mantle.us-east-1.api.aws`) routes requests to the selected model. All 38 non-Anthropic models support tool calling and streaming.
-
-4. **Key env var**: `LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES=true` forces LiteLLM to use `/v1/chat/completions` (not `/v1/responses`) — required for Mantle compatibility with LiteLLM v1.83+.
-
-## Limitations
-
-- **Context window**: Third-party models have smaller context windows (128K or less) compared to Claude's 200K. Claude Code's system prompt is large (~100K chars), so very small models may not work well.
-- **Tool calling quality**: Claude Code relies heavily on structured tool use. Non-Anthropic models vary in tool-calling reliability.
-- **Prompt caching**: Disabled for proxy models (not supported across the translation layer).
-- **Region**: Bedrock Mantle is currently only available in `us-east-1`.
-- **Token expiry**: Mantle bearer tokens expire after 12 hours. Use `./scripts/setup-proxy.sh --refresh` to regenerate.
-
-## Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| `Proxy not reachable` | Run `./scripts/setup-proxy.sh` |
-| `AccessDeniedException` | Enable model access in [Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess) |
-| `AWS credentials not configured` | Run `aws configure` or set up IAM role/SSO |
-| `The provided model identifier is invalid` | Make sure you're using `--settings config/claude-proxy-settings.json` (disables native Bedrock mode) |
-| `Token expired` | Run `./scripts/setup-proxy.sh --refresh` then restart proxy |
-| Small model fails with Claude Code | Claude Code's system prompt is ~100K chars — models with <128K context may fail |
-
-## Benchmark Results
-
-We evaluated 5 models across 5 real-world coding tasks to answer: **can cheaper models match Claude Sonnet on real coding work?**
-
-### Tasks
-
-Each task gives the model a working directory with source files, a natural-language prompt, and a deterministic verifier. The model uses Claude Code with full tool access (Edit, Write, Read, Bash) to solve it.
-
-| # | Task | Prompt | What It Tests | Verifier |
-|---|------|--------|---------------|----------|
-| 1 | **Bug Fix** | Fix off-by-one error in `binary_search()` that causes IndexError on empty arrays | Debugging: read code, identify root cause, apply minimal fix | pytest — 8 test cases covering empty, single, found, not-found, duplicates |
-| 2 | **Write Tests** | Write comprehensive unit tests for a `ShoppingCart` class (add/remove items, discounts, totals) | Test generation: understand API surface, cover edge cases, write runnable code | pytest — all generated tests must pass against the implementation |
-| 3 | **Add Feature** | Add `POST /items` endpoint to a FastAPI app with validation (name required, price > 0, auto-ID, return 201) | Feature work: modify existing code, use framework correctly, handle validation | HTTP assertions — 201 on valid input, 422 on invalid, correct response body |
-| 4 | **Refactor** | Break a 90-line monolithic CSV processor into 4+ functions, each ≤30 lines, preserving the public API | Refactoring: decompose safely, maintain behavior, improve structure | pytest + `grep` — existing tests pass AND function count ≥ 4 |
-| 5 | **Fix Imports** | Resolve circular import between `models.py` ↔ `services.py` so `python main.py` runs | Architecture: understand dependency graph, restructure without breaking contracts | pytest — 5 tests covering import, behavior, and validation |
-
-### Pass/Fail + Quality Scores
-
-| Model | Input $/M | Output $/M | Pass Rate | Quality (1-5) | Avg Latency |
-|-------|-----------|------------|-----------|---------------|-------------|
-| **claude-sonnet** | $3.00 | $15.00 | **100%** | **4.5** | 35s |
-| **qwen-coder-30b** | $0.15 | $0.62 | 80% | **4.2** | 129s |
-| **kimi-k2.5** | $0.60 | $2.50 | 80% | **4.1** | 94s |
-| **qwen-coder-next** | $0.30 | $1.20 | 80% | **4.0** | 140s |
-| **deepseek-v3** | $0.50 | $2.00 | 60% | **3.2** | 155s |
-
-### Task Breakdown
-
-| Model | Bug Fix | Write Tests | Add Feature | Refactor | Fix Imports |
-|-------|---------|-------------|-------------|----------|-------------|
-| claude-sonnet | PASS (16s) | PASS (75s) | PASS (18s) | PASS (31s) | PASS (36s) |
-| qwen-coder-next | PASS (148s) | FAIL | PASS (91s) | PASS (180s) | PASS (167s) |
-| deepseek-v3 | FAIL | FAIL | PASS (109s) | PASS (180s) | PASS (180s) |
-| kimi-k2.5 | PASS (88s) | FAIL | PASS (43s) | PASS (132s) | PASS (94s) |
-| qwen-coder-30b | PASS (76s) | FAIL | PASS (41s) | PASS (180s) | PASS (170s) |
-
-### Cost Efficiency
+## Repository Structure
 
 ```
-Model            Cost Relative    Quality Retained    Best For
-─────────────    ────────────     ────────────────    ────────────────────────
-claude-sonnet    1.0x (baseline)  100%                Architecture, complex reasoning
-kimi-k2.5       5x cheaper       91%                 Feature work, refactoring
-qwen-coder-next 10x cheaper      89%                 Bug fixes, boilerplate
-qwen-coder-30b  20x cheaper      93%                 Simple edits, test generation
+claude-code-multi-model/
+├── README.md                  ← You are here
+├── LICENSE
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
+├── SECURITY.md
+├── SUPPORT.md
+├── bedrock/                   ← Bedrock Mantle path (38 third-party + 5 Anthropic)
+│   ├── README.md              Full Bedrock setup guide + benchmark results
+│   ├── scripts/               setup-proxy.sh, claude-model.sh, mantle-token.sh
+│   ├── config/                litellm-config.yaml, claude-proxy-settings.json
+│   └── benchmark/             5-task evaluation suite + LLM-as-judge
+└── self-hosted/               ← EC2 self-hosted path (Ollama/vLLM)
+    ├── README.md              Full EC2 setup guide
+    ├── SETUP-GUIDE.md         Step-by-step GPU instance provisioning
+    ├── scripts/               setup.sh, run.sh, tunnel.sh
+    └── config/                litellm-config.yaml, model configs
 ```
-
-**Key finding**: Routing routine tasks (bug fixes, refactoring, feature additions) to Kimi K2.5 or Qwen Coder 30B achieves **90%+ of Claude Sonnet's quality at 5-20x lower cost**. Reserve Sonnet/Opus for complex architecture decisions and multi-file reasoning.
-
-### How We Measured
-
-**Deterministic Verifiers (Pass/Fail):**
-- Each task includes pytest tests or validation scripts that verify correctness
-- Models run Claude Code with full tool use (Edit, Write, Read, Bash)
-- Pass = all tests pass in the working directory after the model finishes
-
-**LLM-as-Judge (Quality 1-5):**
-- Claude Opus (native Bedrock) evaluates the actual generated code files
-- Scores on 4 dimensions: correctness, code quality, completeness, efficiency
-- Judge sees the code, not Claude Code's text output — evaluates what was written
-
-**Cost Calculation:**
-- Input/output token pricing from [Bedrock pricing page](https://aws.amazon.com/bedrock/pricing/)
-- Cost efficiency = (Claude Sonnet price) / (model price) at equivalent quality
-- "Quality Retained" = model's average judge score / Claude Sonnet's average judge score
-
-**Tasks:**
-| Task | What It Tests | Verifier |
-|------|---------------|----------|
-| `task1_bugfix` | Fix off-by-one in binary search | pytest: 8 test cases |
-| `task2_tests` | Write tests for ShoppingCart class | pytest: all generated tests pass |
-| `task3_feature` | Add POST /items to FastAPI app | HTTP assertions: 201 + validation |
-| `task4_refactor` | Break monolith into 4+ functions | pytest + function count check |
-| `task5_circular_import` | Fix models↔services circular dep | pytest: 5 import/behavior tests |
-
-### Running the Benchmark
-
-```bash
-cd benchmark
-
-# Run all models, all tasks (with LLM-as-judge)
-./run.sh
-
-# Specific models or tasks
-./run.sh --models "kimi-k2.5,qwen-coder-30b"
-./run.sh --tasks "task1_bugfix,task3_feature"
-
-# Skip judge (faster, pass/fail only)
-./run.sh --no-judge
-
-# Custom timeout per task
-./run.sh --timeout 240
-```
-
-Results are saved to `benchmark/results/` as CSV files.
 
 ## See Also
 
-- **[Claude Code on Amazon EC2](https://github.com/shekharprateek/claude-code-on-amazon-ec2)** — Run Claude Code backed by a self-hosted open-source model (Ollama + Qwen 3.5) on an EC2 GPU instance. Fixed hourly cost, data stays in your VPC.
+- **Anthropic's "Serving a Trillion Tokens a Month"** — our multi-model routing approach implements recommendations from references [14] and [35] of this whitepaper
+- [FrugalGPT](https://arxiv.org/abs/2305.05176) — Academic foundation for LLM cascade cost optimization
+- [RouteLLM](https://arxiv.org/abs/2406.18665) — Dynamic model selection framework
+- [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code) — Official Claude Code documentation
 
 ## License
 
